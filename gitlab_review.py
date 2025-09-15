@@ -170,7 +170,7 @@ class GitLabReviewer:
         except Exception as e:
             raise GitLabReviewError(f"Failed to load findings: {e}")
     
-    def get_file_content(self, api_url: str, project_id: int, file_path: str) -> str:
+    def get_file_content(self, api_url: str, project_id: int, file_path: str, ref: str) -> str:
         """
         Get file content from GitLab repository.
         
@@ -178,6 +178,7 @@ class GitLabReviewer:
             api_url: GitLab API base URL
             project_id: Project ID
             file_path: Path to file in repository
+            ref: Branch or tag name
             
         Returns:
             File content as string
@@ -185,7 +186,7 @@ class GitLabReviewer:
         url = f"{api_url}/projects/{project_id}/repository/files/{urllib.parse.quote(file_path, safe='')}"
         
         try:
-            response = self.session.get(url)
+            response = self.session.get(url, params={'ref': ref})
             
             if response.status_code == 404:
                 raise GitLabReviewError(f"File '{file_path}' not found in repository.")
@@ -417,7 +418,7 @@ This MR contains suggested corrections for `{file_path}` identified by AI review
             return {"dry_run": True, "findings_count": len(findings)}
         
         # Get file content and find text locations
-        content = self.get_file_content(api_url, project_id, file_path)
+        content = self.get_file_content(api_url, project_id, file_path, default_branch)
         finding_lines = self.find_text_lines(content, findings)
         
         if not finding_lines:
