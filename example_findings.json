@@ -1,0 +1,42 @@
+[
+  {
+    "initial_text": "This is a example of poor grammar",
+    "corrected_text": "This is an example of poor grammar",
+    "problem_description": "Incorrect article usage - should use 'an' before words starting with vowel sounds"
+  },
+  {
+    "initial_text": "The API endpoint returns JSON data which contains user information.",
+    "corrected_text": "The API endpoint returns JSON data that contains user information.",
+    "problem_description": "Use 'that' instead of 'which' for restrictive clauses"
+  },
+  {
+    "initial_text": "To setup the environment",
+    "corrected_text": "To set up the environment",
+    "problem_description": "Setup is a noun; 'set up' is the verb form"
+  },
+  {
+    "initial_text": "Its important to validate user input",
+    "corrected_text": "It's important to validate user input",
+    "problem_description": "Missing apostrophe in contraction - 'It's' means 'It is'"
+  },
+  {
+    "initial_text": "The function accepts multiple parameters: username, password, and etc.",
+    "corrected_text": "The function accepts multiple parameters: username, password, etc.",
+    "problem_description": "Remove 'and' before 'etc.' - it's redundant"
+  },
+  {
+    "initial_text": "Make sure to backup your data regularly",
+    "corrected_text": "Make sure to back up your data regularly",
+    "problem_description": "Use 'back up' (verb) instead of 'backup' (noun)"
+  },
+  {
+    "initial_text": "This will effect the performance",
+    "corrected_text": "This will affect the performance",
+    "problem_description": "Use 'affect' (verb) not 'effect' (noun) - affect means to influence"
+  },
+  {
+    "initial_text": "The server response time is slow due to network latency issues.",
+    "corrected_text": "The server response time is slow due to network latency.",
+    "problem_description": "Remove redundant word 'issues' - latency already implies a problem"
+  }
+]

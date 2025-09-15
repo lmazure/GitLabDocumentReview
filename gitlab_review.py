@@ -1,0 +1,541 @@
+#!/usr/bin/env python3
+"""
+GitLab Documentation Review Script
+
+Creates GitLab merge request suggestions from Claude's document review findings,
+using GitLab's native suggestion feature for one-click corrections.
+"""
+
+import argparse
+import base64
+import json
+import os
+import sys
+import time
+import urllib.parse
+from datetime import datetime
+from typing import Dict, List, Optional, Tuple
+
+import requests
+
+
+class GitLabReviewError(Exception):
+    """Custom exception for GitLab review script errors."""
+    pass
+
+
+class GitLabReviewer:
+    """Main class for creating GitLab merge requests with review suggestions."""
+    
+    def __init__(self, api_key: str, verbose: bool = False, delay: float = 1.0):
+        self.api_key = api_key
+        self.verbose = verbose
+        self.delay = delay
+        self.session = requests.Session()
+        self.session.headers.update({
+            'Authorization': f'Bearer {api_key}',
+            'Content-Type': 'application/json'
+        })
+    
+    def log(self, message: str, level: str = "INFO") -> None:
+        """Log a message with timestamp and level."""
+        timestamp = datetime.now().strftime("%H:%M:%S")
+        if level == "ERROR":
+            print(f"[{timestamp}] ❌ {message}", file=sys.stderr)
+        elif level == "WARNING":
+            print(f"[{timestamp}] ⚠️  {message}")
+        elif level == "SUCCESS":
+            print(f"[{timestamp}] ✅ {message}")
+        elif self.verbose or level == "INFO":
+            print(f"[{timestamp}] ℹ️  {message}")
+    
+    def parse_gitlab_url(self, project_url: str) -> Tuple[str, str, str]:
+        """
+        Parse GitLab project URL to extract instance, namespace, and project name.
+        
+        Args:
+            project_url: Full GitLab project URL
+            
+        Returns:
+            Tuple of (instance_url, namespace, project_name)
+        """
+        try:
+            parsed = urllib.parse.urlparse(project_url)
+            if not parsed.scheme or not parsed.netloc:
+                raise ValueError("Invalid URL format")
+            
+            instance_url = f"{parsed.scheme}://{parsed.netloc}"
+            path_parts = parsed.path.strip('/').split('/')
+            
+            if len(path_parts) < 2:
+                raise ValueError("URL must contain namespace and project name")
+            
+            namespace = path_parts[0]
+            project_name = path_parts[1]
+            
+            return instance_url, namespace, project_name
+            
+        except Exception as e:
+            raise GitLabReviewError(f"Failed to parse GitLab URL '{project_url}': {e}")
+    
+    def get_project_info(self, instance_url: str, namespace: str, project_name: str) -> Dict:
+        """
+        Get GitLab project information including project ID.
+        
+        Args:
+            instance_url: GitLab instance base URL
+            namespace: Project namespace
+            project_name: Project name
+            
+        Returns:
+            Project information dictionary
+        """
+        api_url = f"{instance_url}/api/v4"
+        project_path = f"{namespace}%2F{project_name}"
+        url = f"{api_url}/projects/{project_path}"
+        
+        try:
+            response = self.session.get(url)
+            
+            if response.status_code == 401:
+                raise GitLabReviewError("Authentication failed. Please check your GITLAB_API_KEY.")
+            elif response.status_code == 403:
+                raise GitLabReviewError("Insufficient permissions to access this project.")
+            elif response.status_code == 404:
+                raise GitLabReviewError(f"Project '{namespace}/{project_name}' not found.")
+            
+            response.raise_for_status()
+            project_info = response.json()
+            
+            self.log(f"Found project: {project_info['name']} (ID: {project_info['id']})")
+            return project_info
+            
+        except requests.RequestException as e:
+            raise GitLabReviewError(f"Failed to get project information: {e}")
+    
+    def load_findings(self, findings_file: str) -> List[Dict]:
+        """
+        Load and validate Claude findings from JSON file.
+        
+        Args:
+            findings_file: Path to JSON file containing findings
+            
+        Returns:
+            List of validated findings
+        """
+        try:
+            with open(findings_file, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+            
+            # Handle both direct list and wrapped format
+            findings = data if isinstance(data, list) else data.get('findings', [])
+            
+            if not findings:
+                raise GitLabReviewError("No findings found in the JSON file.")
+            
+            # Validate each finding
+            valid_findings = []
+            required_fields = ['initial_text', 'corrected_text', 'problem_description']
+            
+            for i, finding in enumerate(findings):
+                if not isinstance(finding, dict):
+                    self.log(f"Skipping finding {i+1}: Not a valid object", "WARNING")
+                    continue
+                
+                missing_fields = [field for field in required_fields if not finding.get(field)]
+                if missing_fields:
+                    self.log(f"Skipping finding {i+1}: Missing fields: {missing_fields}", "WARNING")
+                    continue
+                
+                # Clean up text fields
+                finding['initial_text'] = finding['initial_text'].strip()
+                finding['corrected_text'] = finding['corrected_text'].strip()
+                
+                if not finding['initial_text']:
+                    self.log(f"Skipping finding {i+1}: Empty initial_text", "WARNING")
+                    continue
+                
+                valid_findings.append(finding)
+            
+            if not valid_findings:
+                raise GitLabReviewError("No valid findings found after validation.")
+            
+            self.log(f"Loaded {len(valid_findings)} valid findings for review")
+            return valid_findings
+            
+        except FileNotFoundError:
+            raise GitLabReviewError(f"Findings file '{findings_file}' not found.")
+        except json.JSONDecodeError as e:
+            raise GitLabReviewError(f"Invalid JSON in findings file: {e}")
+        except Exception as e:
+            raise GitLabReviewError(f"Failed to load findings: {e}")
+    
+    def get_file_content(self, api_url: str, project_id: int, file_path: str) -> str:
+        """
+        Get file content from GitLab repository.
+        
+        Args:
+            api_url: GitLab API base URL
+            project_id: Project ID
+            file_path: Path to file in repository
+            
+        Returns:
+            File content as string
+        """
+        url = f"{api_url}/projects/{project_id}/repository/files/{urllib.parse.quote(file_path, safe='')}"
+        
+        try:
+            response = self.session.get(url)
+            
+            if response.status_code == 404:
+                raise GitLabReviewError(f"File '{file_path}' not found in repository.")
+            
+            response.raise_for_status()
+            file_info = response.json()
+            
+            # Decode content
+            content = file_info.get('content', '')
+            encoding = file_info.get('encoding', 'text')
+            
+            if encoding == 'base64':
+                try:
+                    content = base64.b64decode(content).decode('utf-8')
+                except UnicodeDecodeError:
+                    raise GitLabReviewError(f"File '{file_path}' appears to be binary and cannot be processed.")
+            
+            self.log(f"Retrieved file content: {len(content)} characters")
+            return content
+            
+        except requests.RequestException as e:
+            raise GitLabReviewError(f"Failed to get file content: {e}")
+    
+    def find_text_lines(self, content: str, findings: List[Dict]) -> Dict[int, int]:
+        """
+        Find line numbers for each finding's initial text.
+        
+        Args:
+            content: File content
+            findings: List of findings
+            
+        Returns:
+            Dictionary mapping finding index to line number
+        """
+        lines = content.splitlines()
+        finding_lines = {}
+        
+        for i, finding in enumerate(findings):
+            initial_text = finding['initial_text']
+            matches = []
+            
+            # Search for text in each line
+            for line_num, line in enumerate(lines, 1):
+                if initial_text in line:
+                    matches.append(line_num)
+            
+            if len(matches) == 0:
+                self.log(f"Finding {i+1}: Text not found - '{initial_text[:50]}...'", "WARNING")
+            elif len(matches) > 1:
+                self.log(f"Finding {i+1}: Multiple matches found on lines {matches} - skipping", "WARNING")
+            else:
+                finding_lines[i] = matches[0]
+                self.log(f"Finding {i+1}: Located on line {matches[0]}", "SUCCESS")
+        
+        return finding_lines
+    
+    def create_merge_request(self, api_url: str, project_id: int, file_path: str, 
+                           findings_count: int, default_branch: str) -> Dict:
+        """
+        Create a merge request for the review.
+        
+        Args:
+            api_url: GitLab API base URL
+            project_id: Project ID
+            file_path: Path to reviewed file
+            findings_count: Number of findings
+            default_branch: Default branch name
+            
+        Returns:
+            Merge request information
+        """
+        timestamp = datetime.now().strftime('%Y-%m-%d %H:%M')
+        title = f"Documentation review: {file_path} - {timestamp}"
+        
+        description = f"""# Automated Documentation Review
+
+This MR contains suggested corrections for `{file_path}` identified by AI review.
+
+**Review Date**: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
+**Total Suggestions**: {findings_count}
+
+## How to Review
+1. Each comment contains a suggestion that can be applied with one click
+2. Click "Apply suggestion" to accept a change
+3. Use "Add suggestion to batch" to apply multiple changes together
+4. Reply to discuss any suggestion before applying
+
+## Next Steps
+- Review each suggestion below
+- Apply accepted changes
+- Close this MR when review is complete
+"""
+        
+        data = {
+            'title': title,
+            'description': description,
+            'source_branch': default_branch,
+            'target_branch': default_branch
+        }
+        
+        url = f"{api_url}/projects/{project_id}/merge_requests"
+        
+        try:
+            response = self.session.post(url, json=data)
+            response.raise_for_status()
+            mr_info = response.json()
+            
+            self.log(f"Created merge request: {mr_info['web_url']}")
+            return mr_info
+            
+        except requests.RequestException as e:
+            raise GitLabReviewError(f"Failed to create merge request: {e}")
+    
+    def get_mr_diff_info(self, api_url: str, project_id: int, mr_iid: int) -> Dict:
+        """
+        Get merge request diff information for positioning comments.
+        
+        Args:
+            api_url: GitLab API base URL
+            project_id: Project ID
+            mr_iid: Merge request IID
+            
+        Returns:
+            Dictionary with SHA values
+        """
+        url = f"{api_url}/projects/{project_id}/merge_requests/{mr_iid}/versions"
+        
+        try:
+            response = self.session.get(url)
+            response.raise_for_status()
+            versions = response.json()
+            
+            if not versions:
+                raise GitLabReviewError("No diff versions found for merge request.")
+            
+            latest_version = versions[0]
+            return {
+                'base_commit_sha': latest_version['base_commit_sha'],
+                'head_commit_sha': latest_version['head_commit_sha'],
+                'start_commit_sha': latest_version['start_commit_sha']
+            }
+            
+        except requests.RequestException as e:
+            raise GitLabReviewError(f"Failed to get MR diff information: {e}")
+    
+    def create_discussion(self, api_url: str, project_id: int, mr_iid: int,
+                         finding: Dict, line_number: int, diff_info: Dict, file_path: str) -> str:
+        """
+        Create a discussion thread with suggestion for a finding.
+        
+        Args:
+            api_url: GitLab API base URL
+            project_id: Project ID
+            mr_iid: Merge request IID
+            finding: Finding dictionary
+            line_number: Line number for the comment
+            diff_info: Diff information with SHA values
+            file_path: Path to the file
+            
+        Returns:
+            Discussion ID
+        """
+        # Format the comment body with GitLab suggestion syntax
+        body = f"""**Problem**: {finding['problem_description']}
+**Current text**: "{finding['initial_text']}"
+
+```suggestion:-0+0
+{finding['corrected_text']}
+```"""
+        
+        position = {
+            'position_type': 'text',
+            'base_sha': diff_info['base_commit_sha'],
+            'head_sha': diff_info['head_commit_sha'],
+            'start_sha': diff_info['start_commit_sha'],
+            'old_path': file_path,
+            'new_path': file_path,
+            'old_line': line_number,
+            'new_line': line_number
+        }
+        
+        data = {
+            'body': body,
+            'position': position
+        }
+        
+        url = f"{api_url}/projects/{project_id}/merge_requests/{mr_iid}/discussions"
+        
+        try:
+            response = self.session.post(url, json=data)
+            response.raise_for_status()
+            discussion = response.json()
+            
+            return discussion['id']
+            
+        except requests.RequestException as e:
+            raise GitLabReviewError(f"Failed to create discussion: {e}")
+    
+    def process_review(self, project_url: str, file_path: str, findings_file: str, dry_run: bool = False) -> Dict:
+        """
+        Main method to process the review and create merge request with suggestions.
+        
+        Args:
+            project_url: GitLab project URL
+            file_path: Path to file in repository
+            findings_file: Path to findings JSON file
+            dry_run: If True, show what would be done without making changes
+            
+        Returns:
+            Summary dictionary
+        """
+        # Parse project URL
+        instance_url, namespace, project_name = self.parse_gitlab_url(project_url)
+        api_url = f"{instance_url}/api/v4"
+        
+        # Get project information
+        project_info = self.get_project_info(instance_url, namespace, project_name)
+        project_id = project_info['id']
+        default_branch = project_info['default_branch']
+        
+        # Load findings
+        findings = self.load_findings(findings_file)
+        
+        if dry_run:
+            self.log("DRY RUN: Would process the following:")
+            self.log(f"  Project: {namespace}/{project_name} (ID: {project_id})")
+            self.log(f"  File: {file_path}")
+            self.log(f"  Findings: {len(findings)}")
+            return {"dry_run": True, "findings_count": len(findings)}
+        
+        # Get file content and find text locations
+        content = self.get_file_content(api_url, project_id, file_path)
+        finding_lines = self.find_text_lines(content, findings)
+        
+        if not finding_lines:
+            raise GitLabReviewError("No findings could be located in the file.")
+        
+        # Create merge request
+        mr_info = self.create_merge_request(api_url, project_id, file_path, len(findings), default_branch)
+        mr_iid = mr_info['iid']
+        
+        # Get diff information
+        diff_info = self.get_mr_diff_info(api_url, project_id, mr_iid)
+        
+        # Create discussions for each finding
+        discussion_ids = []
+        comments_created = 0
+        
+        for finding_idx, line_number in finding_lines.items():
+            finding = findings[finding_idx]
+            
+            self.log(f"Processing finding {finding_idx + 1} of {len(findings)}: \"{finding['problem_description'][:50]}...\"")
+            
+            try:
+                discussion_id = self.create_discussion(
+                    api_url, project_id, mr_iid, finding, line_number, diff_info, file_path
+                )
+                discussion_ids.append(discussion_id)
+                comments_created += 1
+                self.log(f"✓ Comment created on line {line_number}", "SUCCESS")
+                
+                # Rate limiting delay
+                if self.delay > 0:
+                    time.sleep(self.delay)
+                    
+            except Exception as e:
+                self.log(f"Failed to create comment for finding {finding_idx + 1}: {e}", "ERROR")
+        
+        # Summary
+        skipped_count = len(findings) - len(finding_lines)
+        summary = {
+            "mr_url": mr_info['web_url'],
+            "mr_iid": mr_iid,
+            "total_findings": len(findings),
+            "comments_created": comments_created,
+            "skipped_findings": skipped_count,
+            "discussion_ids": discussion_ids,
+            "timestamp": datetime.now().isoformat()
+        }
+        
+        self.log("\n=== SUMMARY ===")
+        self.log(f"✓ Total findings: {len(findings)}")
+        self.log(f"✓ Comments created: {comments_created}")
+        if skipped_count > 0:
+            self.log(f"⚠ Skipped (text not found): {skipped_count}")
+        self.log(f"\n📋 Merge Request: {mr_info['web_url']}")
+        
+        return summary
+
+
+def main():
+    """Main entry point for the script."""
+    parser = argparse.ArgumentParser(
+        description="Create GitLab merge request suggestions from Claude's document review findings",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Example usage:
+  export GITLAB_API_KEY="glpat-xxxxxxxxxxxxxxxxxxxx"
+  python gitlab_review.py https://gitlab.com/myorg/docs docs/README.md findings.json
+        """
+    )
+    
+    parser.add_argument('project_url', help='GitLab project URL (e.g., https://gitlab.com/username/project)')
+    parser.add_argument('file_path', help='Path to reviewed file in repository (e.g., docs/README.md)')
+    parser.add_argument('findings_file', help='JSON file containing Claude\'s findings')
+    
+    parser.add_argument('--dry-run', action='store_true', 
+                       help='Show what would be created without making API calls')
+    parser.add_argument('--verbose', action='store_true',
+                       help='Enable detailed logging')
+    parser.add_argument('--delay', type=float, default=1.0,
+                       help='Delay between API calls in seconds (default: 1.0)')
+    
+    args = parser.parse_args()
+    
+    # Validate environment
+    api_key = os.getenv('GITLAB_API_KEY')
+    if not api_key:
+        print("❌ Error: GITLAB_API_KEY environment variable is required", file=sys.stderr)
+        print("Set it with: export GITLAB_API_KEY=\"your-token-here\"", file=sys.stderr)
+        sys.exit(1)
+    
+    # Validate findings file exists
+    if not os.path.isfile(args.findings_file):
+        print(f"❌ Error: Findings file '{args.findings_file}' not found", file=sys.stderr)
+        sys.exit(1)
+    
+    try:
+        reviewer = GitLabReviewer(api_key, verbose=args.verbose, delay=args.delay)
+        summary = reviewer.process_review(args.project_url, args.file_path, args.findings_file, args.dry_run)
+        
+        # Optionally save summary to file
+        if not args.dry_run:
+            summary_file = f"review_summary_{summary['mr_iid']}.json"
+            with open(summary_file, 'w') as f:
+                json.dump(summary, f, indent=2)
+            print(f"\n📄 Summary saved to: {summary_file}")
+        
+        sys.exit(0)
+        
+    except GitLabReviewError as e:
+        print(f"❌ Error: {e}", file=sys.stderr)
+        sys.exit(3)
+    except KeyboardInterrupt:
+        print("\n⚠️ Operation cancelled by user", file=sys.stderr)
+        sys.exit(1)
+    except Exception as e:
+        print(f"❌ Unexpected error: {e}", file=sys.stderr)
+        sys.exit(4)
+
+
+if __name__ == '__main__':
+    main()
