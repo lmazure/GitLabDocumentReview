@@ -305,6 +305,15 @@ This MR contains suggested corrections for `{file_path}` identified by AI review
         """
         Get merge request diff information for positioning comments.
         
+        Returns a dictionary with the following keys:
+            - 'base_commit_sha': The SHA of the base commit in the target branch (the branch being merged into)
+            - 'head_commit_sha': The SHA of the head commit in the source branch (the branch containing the changes)
+            - 'start_commit_sha': The SHA of the common ancestor commit between the source and target branches
+        
+        These values are used to position comments correctly in the merge request diff view.
+        For more details, see the GitLab API documentation for merge requests:
+        https://docs.gitlab.com/ee/api/merge_requests.html#response-attributes
+        
         Args:
             api_url: GitLab API base URL
             project_id: Project ID
