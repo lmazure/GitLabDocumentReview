@@ -298,7 +298,7 @@ This MR contains suggested corrections for `{file_path}` identified by AI review
 ## Next Steps
 - Review each suggestion below
 - Apply accepted changes
-- Close this MR when review is complete
+- merge this MR when review is complete
 """
         
         data = {
