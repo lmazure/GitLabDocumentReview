@@ -402,13 +402,12 @@ This MR contains suggested corrections for `{file_path}` identified by AI review
             Discussion ID
         """
         # Format the comment body with GitLab suggestion syntax
-        body = f"""**Problem**: {finding['problem_description']}
-**Current text**: "{finding['initial_text']}"
+        body = f"""{finding['problem_description']}
 
 ```suggestion:-0+0
 {finding['corrected_text']}
 ```"""
-        
+        filename_hash = "e192bb1a18afdb8d546a8a7f9d813e97e9e23eea"
         position = {
             'position_type': 'text',
             'base_sha': diff_info['base_commit_sha'],
@@ -416,7 +415,20 @@ This MR contains suggested corrections for `{file_path}` identified by AI review
             'start_sha': diff_info['start_commit_sha'],
             'old_path': file_path,
             'new_path': file_path,
-            'new_line': line_number
+            'old_line': line_number,
+            'new_line': line_number,
+            'line_range': {
+                'start': {
+                    'old_line': line_number,
+                    'new_line': line_number,
+                    'line_code': f"{filename_hash}_{line_number}_{line_number}"
+                },
+                'end': {
+                    'old_line': line_number,
+                    'new_line': line_number,
+                    'line_code': f"{filename_hash}_{line_number}_{line_number}"
+                }
+            }   
         }
         
         data = {
@@ -484,6 +496,59 @@ This MR contains suggested corrections for `{file_path}` identified by AI review
             error_msg = f"Failed to create branch: {e}\nResponse: {response_text}"
             raise GitLabReviewError(error_msg)
     
+    def add_blank_line(self, api_url: str, project_id: int, branch_name: str, file_path: str) -> None:
+        """
+        Add a blank line at the end of a file and commit it to create a diff.
+        
+        Args:
+            api_url: GitLab API base URL
+            project_id: Project ID
+            branch_name: Name of the branch to commit to
+            file_path: Path to the file to modify
+        """
+        # First, get the current file content
+        try:
+            if self.verbose:
+                self.log(f"Getting current content of {file_path} on branch {branch_name}")
+                
+            # Get the current file content
+            content = self.get_file_content(api_url, project_id, file_path, branch_name)
+            
+            # Add a blank line if it doesn't already end with one
+            if not content.endswith('\n'):
+                content += '\n'
+            content += '\n'  # Add an extra blank line
+            
+            # Use the file update API
+            url = f"{api_url}/projects/{project_id}/repository/files/{urllib.parse.quote(file_path, safe='')}"
+            
+            # Prepare update data
+            update_data = {
+                'branch': branch_name,
+                'content': content,
+                'commit_message': 'Add blank line for review comments'
+            }
+            
+            if self.verbose:
+                self.log(f"Updating file at URL: {url}")
+                update_data_log = update_data.copy()
+                update_data_log['content'] = '[content truncated]'
+                self.log(f"Update data: {json.dumps(update_data_log, indent=2)}")
+            
+            response = self.session.put(url, json=update_data)
+            
+            if self.verbose:
+                self.log(f"Response status: {response.status_code}")
+                self.log(f"Response headers: {response.headers}")
+            
+            response.raise_for_status()
+            self.log(f"Added blank line to {file_path}")
+            
+        except requests.RequestException as e:
+            response_text = response.text if hasattr(response, 'text') else "No response received"
+            error_msg = f"Failed to add blank line to file: {e}\nResponse: {response_text}"
+            raise GitLabReviewError(error_msg)
+    
     def process_review(self, project_url: str, file_path: str, findings_file: str, dry_run: bool = False) -> Dict:
         """
         Main method to process the review and create merge request with suggestions.
@@ -531,6 +596,12 @@ This MR contains suggested corrections for `{file_path}` identified by AI review
         # Create merge request
         mr_info = self.create_merge_request(api_url, project_id, file_path, len(findings), branch_name, default_branch)
         mr_iid = mr_info['iid']
+        
+        # Add a blank line at the end of the file
+        self.add_blank_line(api_url, project_id, branch_name, file_path)
+        
+        # sleep for 10 seconds
+        time.sleep(10)
         
         # Get diff information
         diff_info = self.get_mr_diff_info(api_url, project_id, mr_iid)
