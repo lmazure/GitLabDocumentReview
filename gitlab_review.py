@@ -95,8 +95,16 @@ class GitLabReviewer:
         url = f"{api_url}/projects/{project_path}"
         
         try:
+            if self.verbose:
+                self.log(f"Fetching project info from URL: {url}")
+            
             response = self.session.get(url)
             
+            if self.verbose:
+                self.log(f"Response status: {response.status_code}")
+                self.log(f"Response headers: {response.headers}")
+                self.log(f"Response content: {response.text}")
+                
             if response.status_code == 401:
                 raise GitLabReviewError("Authentication failed. Please check your GITLAB_API_KEY.")
             elif response.status_code == 403:
@@ -111,7 +119,9 @@ class GitLabReviewer:
             return project_info
             
         except requests.RequestException as e:
-            raise GitLabReviewError(f"Failed to get project information: {e}")
+            response_text = response.text if hasattr(response, 'text') else "No response received"
+            error_msg = f"Failed to get project information: {e}\nResponse: {response_text}"
+            raise GitLabReviewError(error_msg)
     
     def load_findings(self, findings_file: str) -> List[Dict]:
         """
@@ -186,8 +196,16 @@ class GitLabReviewer:
         url = f"{api_url}/projects/{project_id}/repository/files/{urllib.parse.quote(file_path, safe='')}"
         
         try:
+            if self.verbose:
+                self.log(f"Fetching file content from URL: {url}")
+            
             response = self.session.get(url, params={'ref': ref})
             
+            if self.verbose:
+                self.log(f"Response status: {response.status_code}")
+                self.log(f"Response headers: {response.headers}")
+                self.log(f"Response content: {response.text}")
+                
             if response.status_code == 404:
                 raise GitLabReviewError(f"File '{file_path}' not found in repository.")
             
@@ -208,7 +226,9 @@ class GitLabReviewer:
             return content
             
         except requests.RequestException as e:
-            raise GitLabReviewError(f"Failed to get file content: {e}")
+            response_text = response.text if hasattr(response, 'text') else "No response received"
+            error_msg = f"Failed to get file content: {e}\nResponse: {response_text}"
+            raise GitLabReviewError(error_msg)
     
     def find_text_lines(self, content: str, findings: List[Dict]) -> Dict[int, int]:
         """
@@ -291,7 +311,17 @@ This MR contains suggested corrections for `{file_path}` identified by AI review
         url = f"{api_url}/projects/{project_id}/merge_requests"
         
         try:
+            if self.verbose:
+                self.log(f"Creating merge request at URL: {url}")
+                self.log(f"Request data: {json.dumps(data, indent=2)}")
+            
             response = self.session.post(url, json=data)
+            
+            if self.verbose:
+                self.log(f"Response status: {response.status_code}")
+                self.log(f"Response headers: {response.headers}")
+                self.log(f"Response content: {response.text}")
+                
             response.raise_for_status()
             mr_info = response.json()
             
@@ -299,7 +329,9 @@ This MR contains suggested corrections for `{file_path}` identified by AI review
             return mr_info
             
         except requests.RequestException as e:
-            raise GitLabReviewError(f"Failed to create merge request: {e}")
+            response_text = response.text if hasattr(response, 'text') else "No response received"
+            error_msg = f"Failed to create merge request: {e}\nResponse: {response_text}"
+            raise GitLabReviewError(error_msg)
     
     def get_mr_diff_info(self, api_url: str, project_id: int, mr_iid: int) -> Dict:
         """
@@ -325,7 +357,16 @@ This MR contains suggested corrections for `{file_path}` identified by AI review
         url = f"{api_url}/projects/{project_id}/merge_requests/{mr_iid}"
         
         try:
+            if self.verbose:
+                self.log(f"Fetching MR diff info from URL: {url}")
+            
             response = self.session.get(url)
+            
+            if self.verbose:
+                self.log(f"Response status: {response.status_code}")
+                self.log(f"Response headers: {response.headers}")
+                self.log(f"Response content: {response.text}")
+                
             response.raise_for_status()
             mr_info = response.json()
             
@@ -339,7 +380,9 @@ This MR contains suggested corrections for `{file_path}` identified by AI review
             }
             
         except requests.RequestException as e:
-            raise GitLabReviewError(f"Failed to get MR diff information: {e}")
+            response_text = response.text if hasattr(response, 'text') else "No response received"
+            error_msg = f"Failed to get MR diff information: {e}\nResponse: {response_text}"
+            raise GitLabReviewError(error_msg)
     
     def create_discussion(self, api_url: str, project_id: int, mr_iid: int,
                          finding: Dict, line_number: int, diff_info: Dict, file_path: str) -> str:
@@ -373,7 +416,6 @@ This MR contains suggested corrections for `{file_path}` identified by AI review
             'start_sha': diff_info['start_commit_sha'],
             'old_path': file_path,
             'new_path': file_path,
-            'old_line': line_number,
             'new_line': line_number
         }
         
@@ -385,14 +427,27 @@ This MR contains suggested corrections for `{file_path}` identified by AI review
         url = f"{api_url}/projects/{project_id}/merge_requests/{mr_iid}/discussions"
         
         try:
+            if self.verbose:
+                self.log(f"Creating discussion at URL: {url}")
+                self.log(f"Request data: {json.dumps(data, indent=2)}")
+            
             response = self.session.post(url, json=data)
+            
+            if self.verbose:
+                self.log(f"Response status: {response.status_code}")
+                self.log(f"Response headers: {response.headers}")
+                self.log(f"Response content: {response.text}")
+                
             response.raise_for_status()
             discussion = response.json()
             
             return discussion['id']
             
         except requests.RequestException as e:
-            raise GitLabReviewError(f"Failed to create discussion: {e}")
+            # Capture response text for detailed error analysis
+            response_text = response.text if response else "No response received"
+            error_msg = f"Failed to create discussion: {e}\nResponse: {response_text}"
+            raise GitLabReviewError(error_msg)
     
     def create_branch(self, api_url: str, project_id: int, branch_name: str, ref: str) -> None:
         """
@@ -411,11 +466,23 @@ This MR contains suggested corrections for `{file_path}` identified by AI review
         }
         
         try:
+            if self.verbose:
+                self.log(f"Creating branch at URL: {url}")
+                self.log(f"Request data: {json.dumps(data, indent=2)}")
+            
             response = self.session.post(url, json=data)
+            
+            if self.verbose:
+                self.log(f"Response status: {response.status_code}")
+                self.log(f"Response headers: {response.headers}")
+                self.log(f"Response content: {response.text}")
+                
             response.raise_for_status()
             self.log(f"Created branch: {branch_name}")
         except requests.RequestException as e:
-            raise GitLabReviewError(f"Failed to create branch: {e}")
+            response_text = response.text if hasattr(response, 'text') else "No response received"
+            error_msg = f"Failed to create branch: {e}\nResponse: {response_text}"
+            raise GitLabReviewError(error_msg)
     
     def process_review(self, project_url: str, file_path: str, findings_file: str, dry_run: bool = False) -> Dict:
         """
