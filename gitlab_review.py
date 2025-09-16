@@ -313,21 +313,20 @@ This MR contains suggested corrections for `{file_path}` identified by AI review
         Returns:
             Dictionary with SHA values
         """
-        url = f"{api_url}/projects/{project_id}/merge_requests/{mr_iid}/versions"
+        url = f"{api_url}/projects/{project_id}/merge_requests/{mr_iid}"
         
         try:
             response = self.session.get(url)
             response.raise_for_status()
-            versions = response.json()
+            mr_info = response.json()
             
-            if not versions:
-                raise GitLabReviewError("No diff versions found for merge request.")
+            if 'diff_refs' not in mr_info:
+                raise GitLabReviewError("No diff_refs found in merge request.")
             
-            latest_version = versions[0]
             return {
-                'base_commit_sha': latest_version['base_commit_sha'],
-                'head_commit_sha': latest_version['head_commit_sha'],
-                'start_commit_sha': latest_version['start_commit_sha']
+                'base_commit_sha': mr_info['diff_refs']['base_sha'],
+                'head_commit_sha': mr_info['diff_refs']['head_sha'],
+                'start_commit_sha': mr_info['diff_refs']['start_sha']
             }
             
         except requests.RequestException as e:
