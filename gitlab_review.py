@@ -244,7 +244,7 @@ class GitLabReviewer:
         return finding_lines
     
     def create_merge_request(self, api_url: str, project_id: int, file_path: str, 
-                           findings_count: int, default_branch: str) -> Dict:
+                           findings_count: int, source_branch: str, target_branch: str) -> Dict:
         """
         Create a merge request for the review.
         
@@ -253,7 +253,8 @@ class GitLabReviewer:
             project_id: Project ID
             file_path: Path to reviewed file
             findings_count: Number of findings
-            default_branch: Default branch name
+            source_branch: Source branch for the merge request
+            target_branch: Target branch for the merge request
             
         Returns:
             Merge request information
@@ -283,8 +284,8 @@ This MR contains suggested corrections for `{file_path}` identified by AI review
         data = {
             'title': title,
             'description': description,
-            'source_branch': default_branch,
-            'target_branch': default_branch
+            'source_branch': source_branch,
+            'target_branch': target_branch
         }
         
         url = f"{api_url}/projects/{project_id}/merge_requests"
@@ -385,6 +386,29 @@ This MR contains suggested corrections for `{file_path}` identified by AI review
         except requests.RequestException as e:
             raise GitLabReviewError(f"Failed to create discussion: {e}")
     
+    def create_branch(self, api_url: str, project_id: int, branch_name: str, ref: str) -> None:
+        """
+        Create a new branch in the project.
+        
+        Args:
+            api_url: GitLab API base URL
+            project_id: Project ID
+            branch_name: Name of the new branch
+            ref: Branch or commit SHA to base the new branch on
+        """
+        url = f"{api_url}/projects/{project_id}/repository/branches"
+        data = {
+            'branch': branch_name,
+            'ref': ref
+        }
+        
+        try:
+            response = self.session.post(url, json=data)
+            response.raise_for_status()
+            self.log(f"Created branch: {branch_name}")
+        except requests.RequestException as e:
+            raise GitLabReviewError(f"Failed to create branch: {e}")
+    
     def process_review(self, project_url: str, file_path: str, findings_file: str, dry_run: bool = False) -> Dict:
         """
         Main method to process the review and create merge request with suggestions.
@@ -417,6 +441,11 @@ This MR contains suggested corrections for `{file_path}` identified by AI review
             self.log(f"  Findings: {len(findings)}")
             return {"dry_run": True, "findings_count": len(findings)}
         
+        # Create a new branch for the review
+        timestamp = datetime.now().strftime('%Y%m%d%H%M%S')
+        branch_name = f"documentation-review-{timestamp}"
+        self.create_branch(api_url, project_id, branch_name, default_branch)
+        
         # Get file content and find text locations
         content = self.get_file_content(api_url, project_id, file_path, default_branch)
         finding_lines = self.find_text_lines(content, findings)
@@ -425,7 +454,7 @@ This MR contains suggested corrections for `{file_path}` identified by AI review
             raise GitLabReviewError("No findings could be located in the file.")
         
         # Create merge request
-        mr_info = self.create_merge_request(api_url, project_id, file_path, len(findings), default_branch)
+        mr_info = self.create_merge_request(api_url, project_id, file_path, len(findings), branch_name, default_branch)
         mr_iid = mr_info['iid']
         
         # Get diff information
