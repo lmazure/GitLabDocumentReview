@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """
 GitLab Documentation Review Script
 
@@ -8,6 +7,7 @@ using GitLab's native suggestion feature for one-click corrections.
 
 import argparse
 import base64
+import hashlib
 import json
 import os
 import sys
@@ -407,7 +407,8 @@ This MR contains suggested corrections for `{file_path}` identified by AI review
 ```suggestion:-0+0
 {finding['corrected_text']}
 ```"""
-        filename_hash = "e192bb1a18afdb8d546a8a7f9d813e97e9e23eea"
+        # Compute SHA1 hash of the filename (equivalent to `echo -n "filename" | sha1sum`)
+        filename_hash = hashlib.sha1(file_path.encode('utf-8')).hexdigest()
         position = {
             'position_type': 'text',
             'base_sha': diff_info['base_commit_sha'],
@@ -600,7 +601,7 @@ This MR contains suggested corrections for `{file_path}` identified by AI review
         # Add a blank line at the end of the file
         self.add_blank_line(api_url, project_id, branch_name, file_path)
         
-        # sleep for 10 seconds
+        # sleep for 10 seconds otherwise GitLab will return 500 errors (probably because it would still be updating the Merge Request)
         time.sleep(10)
         
         # Get diff information
