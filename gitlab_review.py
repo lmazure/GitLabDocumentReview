@@ -298,7 +298,7 @@ This MR contains suggested corrections for `{file_path}` identified by AI review
 ## Next Steps
 - Review each suggestion below
 - Apply accepted changes
-- merge this MR when review is complete
+- Merge this MR when review is complete
 """
         
         data = {
@@ -407,7 +407,7 @@ This MR contains suggested corrections for `{file_path}` identified by AI review
 ```suggestion:-0+0
 {finding['corrected_text']}
 ```"""
-        # Compute SHA1 hash of the filename (equivalent to `echo -n "filename" | sha1sum`)
+        # Compute SHA1 hash of the filename
         filename_hash = hashlib.sha1(file_path.encode('utf-8')).hexdigest()
         position = {
             'position_type': 'text',
@@ -550,7 +550,7 @@ This MR contains suggested corrections for `{file_path}` identified by AI review
             error_msg = f"Failed to add blank line to file: {e}\nResponse: {response_text}"
             raise GitLabReviewError(error_msg)
     
-    def process_review(self, project_url: str, file_path: str, findings_file: str, dry_run: bool = False) -> Dict:
+    def process_review(self, project_url: str, file_path: str, findings_file: str) -> Dict:
         """
         Main method to process the review and create merge request with suggestions.
         
@@ -558,7 +558,6 @@ This MR contains suggested corrections for `{file_path}` identified by AI review
             project_url: GitLab project URL
             file_path: Path to file in repository
             findings_file: Path to findings JSON file
-            dry_run: If True, show what would be done without making changes
             
         Returns:
             Summary dictionary
@@ -574,13 +573,6 @@ This MR contains suggested corrections for `{file_path}` identified by AI review
         
         # Load findings
         findings = self.load_findings(findings_file)
-        
-        if dry_run:
-            self.log("DRY RUN: Would process the following:")
-            self.log(f"  Project: {namespace}/{project_name} (ID: {project_id})")
-            self.log(f"  File: {file_path}")
-            self.log(f"  Findings: {len(findings)}")
-            return {"dry_run": True, "findings_count": len(findings)}
         
         # Create a new branch for the review
         timestamp = datetime.now().strftime('%Y%m%d%H%M%S')
@@ -669,8 +661,6 @@ Example usage:
     parser.add_argument('file_path', help='Path to reviewed file in repository (e.g., docs/README.md)')
     parser.add_argument('findings_file', help='JSON file containing Claude\'s findings')
     
-    parser.add_argument('--dry-run', action='store_true', 
-                       help='Show what would be created without making API calls')
     parser.add_argument('--verbose', action='store_true',
                        help='Enable detailed logging')
     parser.add_argument('--delay', type=float, default=1.0,
@@ -692,14 +682,13 @@ Example usage:
     
     try:
         reviewer = GitLabReviewer(api_key, verbose=args.verbose, delay=args.delay)
-        summary = reviewer.process_review(args.project_url, args.file_path, args.findings_file, args.dry_run)
+        summary = reviewer.process_review(args.project_url, args.file_path, args.findings_file)
         
-        # Optionally save summary to file
-        if not args.dry_run:
-            summary_file = f"review_summary_{summary['mr_iid']}.json"
-            with open(summary_file, 'w') as f:
-                json.dump(summary, f, indent=2)
-            print(f"\n📄 Summary saved to: {summary_file}")
+        # Save summary to file
+        summary_file = f"review_summary_{summary['mr_iid']}.json"
+        with open(summary_file, 'w') as f:
+            json.dump(summary, f, indent=2)
+        print(f"\n📄 Summary saved to: {summary_file}")
         
         sys.exit(0)
         
