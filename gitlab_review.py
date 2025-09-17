@@ -27,10 +27,9 @@ class GitLabReviewError(Exception):
 class GitLabReviewer:
     """Main class for creating GitLab merge requests with review suggestions."""
     
-    def __init__(self, api_key: str, verbose: bool = False, delay: float = 1.0):
+    def __init__(self, api_key: str, verbose: bool = False):
         self.api_key = api_key
         self.verbose = verbose
-        self.delay = delay
         self.session = requests.Session()
         self.session.headers.update({
             'Authorization': f'Bearer {api_key}',
@@ -616,9 +615,8 @@ This MR contains suggested corrections for `{file_path}` identified by AI review
                 comments_created += 1
                 self.log(f"✓ Comment created on line {line_number}", "SUCCESS")
                 
-                # Rate limiting delay
-                if self.delay > 0:
-                    time.sleep(self.delay)
+                # Rate limiting
+                time.sleep(2)
                     
             except Exception as e:
                 self.log(f"Failed to create comment for finding {finding_idx + 1}: {e}", "ERROR")
@@ -663,8 +661,6 @@ Example usage:
     
     parser.add_argument('--verbose', action='store_true',
                        help='Enable detailed logging')
-    parser.add_argument('--delay', type=float, default=1.0,
-                       help='Delay between API calls in seconds (default: 1.0)')
     
     args = parser.parse_args()
     
@@ -681,7 +677,7 @@ Example usage:
         sys.exit(1)
     
     try:
-        reviewer = GitLabReviewer(api_key, verbose=args.verbose, delay=args.delay)
+        reviewer = GitLabReviewer(api_key, verbose=args.verbose)
         summary = reviewer.process_review(args.project_url, args.file_path, args.findings_file)
         
         # Save summary to file
