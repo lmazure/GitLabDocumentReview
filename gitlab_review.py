@@ -646,21 +646,33 @@ This MR contains suggested corrections for `{file_path}` identified by AI review
 def main():
     """Main entry point for the script."""
     parser = argparse.ArgumentParser(
-        description="Create GitLab merge request suggestions from Claude's document review findings",
+        description="Create GitLab merge request suggestions from review findings",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Example usage:
-  export GITLAB_API_KEY="glpat-xxxxxxxxxxxxxxxxxxxx"
-  python gitlab_review.py https://gitlab.com/myorg/docs docs/README.md findings.json
+  export GITLAB_API_KEY="xxxxxxxxxxxxxxxxxxxx"
+  python gitlab_review.py https://gitlab.com/myorg/myproject filepath/filename findings.json
+
+The syntax of the findings JSON file is as follows:
+[
+  {
+    "initial_text": "This is a example of poor grammar",
+    "corrected_text": "This is an example of poor grammar",
+    "problem_description": "Incorrect article usage - should use 'an' before words starting with vowel sounds"
+  },
+  ...
+]
+where:
+- initial_text: The original text that needs to be corrected
+- corrected_text: The suggested correction for the text
+- problem_description: A description of the issue found in the text
         """
     )
     
     parser.add_argument('project_url', help='GitLab project URL (e.g., https://gitlab.com/username/project)')
     parser.add_argument('file_path', help='Path to reviewed file in repository (e.g., docs/README.md)')
-    parser.add_argument('findings_file', help='JSON file containing Claude\'s findings')
-    
-    parser.add_argument('--verbose', action='store_true',
-                       help='Enable detailed logging')
+    parser.add_argument('findings_file', help='JSON file containing review findings')
+    parser.add_argument('--verbose', action='store_true', help='Enable detailed logging')
     
     args = parser.parse_args()
     
@@ -668,7 +680,6 @@ Example usage:
     api_key = os.getenv('GITLAB_API_KEY')
     if not api_key:
         print("❌ Error: GITLAB_API_KEY environment variable is required", file=sys.stderr)
-        print("Set it with: export GITLAB_API_KEY=\"your-token-here\"", file=sys.stderr)
         sys.exit(1)
     
     # Validate findings file exists
